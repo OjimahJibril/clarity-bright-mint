@@ -36,6 +36,7 @@ Clarinet.test({
     assertEquals(metadata['description'], types.utf8(description));
     assertEquals(metadata['creator'], deployer.address);
     assertEquals(metadata['likes'], types.uint(0));
+    assertEquals(metadata['rewards-claimed'], types.uint(0));
   },
 });
 
@@ -72,7 +73,7 @@ Clarinet.test({
 });
 
 Clarinet.test({
-  name: "Can like an idea",
+  name: "Can like and comment on an idea",
   async fn(chain: Chain, accounts: Map<string, Account>) {
     const deployer = accounts.get('deployer')!;
     const wallet1 = accounts.get('wallet_1')!;
@@ -85,12 +86,66 @@ Clarinet.test({
       // Like the idea
       Tx.contractCall('bright_mint', 'like-idea', [
         types.uint(1)
+      ], wallet1.address),
+      // Comment on idea
+      Tx.contractCall('bright_mint', 'add-comment', [
+        types.uint(1),
+        types.utf8("Great idea!")
       ], wallet1.address)
     ]);
 
     block.receipts[1].result.expectOk().expectBool(true);
+    block.receipts[2].result.expectOk().expectBool(true);
 
-    // Verify like count increased
+    // Verify like count and comment
+    let metadataBlock = chain.mineBlock([
+      Tx.contractCall('bright_mint', 'get-token-metadata', [
+        types.uint(1)
+      ], deployer.address),
+      Tx.contractCall('bright_mint', 'get-token-comments', [
+        types.uint(1)
+      ], deployer.address)
+    ]);
+
+    let metadata = metadataBlock.receipts[0].result.expectOk().expectTuple();
+    assertEquals(metadata['likes'], types.uint(1));
+
+    let comments = metadataBlock.receipts[1].result.expectOk().expectList();
+    assertEquals(comments.length, 1);
+    assertEquals(comments[0].author, wallet1.address);
+    assertEquals(comments[0].text, types.utf8("Great idea!"));
+  },
+});
+
+Clarinet.test({
+  name: "Can claim rewards from likes",
+  async fn(chain: Chain, accounts: Map<string, Account>) {
+    const deployer = accounts.get('deployer')!;
+    const wallet1 = accounts.get('wallet_1')!;
+    const wallet2 = accounts.get('wallet_2')!;
+
+    let block = chain.mineBlock([
+      Tx.contractCall('bright_mint', 'mint-idea', [
+        types.utf8("Title"),
+        types.utf8("Description")
+      ], deployer.address),
+      // Add likes from different users
+      Tx.contractCall('bright_mint', 'like-idea', [
+        types.uint(1)
+      ], wallet1.address),
+      Tx.contractCall('bright_mint', 'like-idea', [
+        types.uint(1)
+      ], wallet2.address),
+      // Claim rewards
+      Tx.contractCall('bright_mint', 'claim-rewards', [
+        types.uint(1)
+      ], deployer.address)
+    ]);
+
+    // Verify reward claim
+    block.receipts[3].result.expectOk().expectUint(2);
+
+    // Verify updated metadata
     let metadataBlock = chain.mineBlock([
       Tx.contractCall('bright_mint', 'get-token-metadata', [
         types.uint(1)
@@ -98,6 +153,7 @@ Clarinet.test({
     ]);
 
     let metadata = metadataBlock.receipts[0].result.expectOk().expectTuple();
-    assertEquals(metadata['likes'], types.uint(1));
+    assertEquals(metadata['likes'], types.uint(2));
+    assertEquals(metadata['rewards-claimed'], types.uint(2));
   },
 });
